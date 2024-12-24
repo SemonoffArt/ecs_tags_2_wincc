@@ -15,18 +15,22 @@ from pandas.core.interchange.dataframe_protocol import DataFrame
 
 _VERSION = 0.1
 _PRG_DIR = Path("./").absolute()
+_RESOURCES_DIR = _PRG_DIR / "resources"
+_TEMPLATE_DIR = _RESOURCES_DIR / "templates"
 _LOG_FILE = _PRG_DIR / "ecs2wincc.log"
 _MAGADAN_UTC = 11  # Магаданское время +11 часов к UTC
 DEBUG = True
 QTY_TAGS = 0  # количество тегов
 QTY_VALS = 0  # количество значений
-XLS_FILE_ECS = _PRG_DIR / "Points.xlsx"
-XLS_FILE_WINCC = _PRG_DIR / "tags_wincc_test.xlsx"
-XLS_FILE_WINCC_TEMPLATE = _PRG_DIR / "wincc_template.xlsx"
+XLS_ECS = _PRG_DIR / "Points.xlsx"
+XLS_WINCC = _PRG_DIR / "tags_wincc_test.xlsx"
+XLS_MOTOR_TEMPLATE = _TEMPLATE_DIR / "wincc_motor_template.xlsx"
+XLS_INTERLOCK_TEMPLATE = _TEMPLATE_DIR / "wincc_interlock_template.xlsx"
 POINT_TYPE = r"unimotor"
 PLC = r"994"
-FILTER = r"pu044"
-WINCC_TEMPLATE_DF = pd.DataFrame()
+FILTER = r"sj"
+WINCC_MOTOR_TEMPLATE_DF = pd.DataFrame()
+WINCC_INTERLOCK_TEMPLATE_DF = pd.DataFrame()
 ECS_TAGS_DF = pd.DataFrame()
 
 init(autoreset=True)
@@ -48,22 +52,19 @@ def get_parent_info(parent_tag_name: str) -> str:
     return parent_info
 
 
-def get_childs(parent_tag_name: str) -> DataFrame:
-    """Получение информации о дочерних тегах"""
+def get_children_interlock(parent_tag_name: str) -> DataFrame:
+    """Получение информации о дочерних тегах, только интерлоки"""
     mask = ECS_TAGS_DF['FunctionalHierarchy'].str.contains(parent_tag_name, case=False) & (
-        ECS_TAGS_DF['Designation'].str.contains("int", case=False) |
-        ECS_TAGS_DF['Designation'].str.contains("stp", case=False) |
-        ECS_TAGS_DF['Designation'].str.contains("str", case=False)
+        ECS_TAGS_DF['Designation'].str.contains(r"int\d+|stp\d+|str\d+", case=False, regex=True)
     )
     return ECS_TAGS_DF[mask]
 
 
-def make_interloc_df(interloc) -> DataFrame:
+def make_interlock_df(interlocks:DataFrame) -> DataFrame:
     """Создание DataFrame для тега интерлока"""
-    head = [["Name", "Path", "Connection", "PLC tag", "DataType", "HMI DataType", "Length", "Coding", "Access Method", "Address", "Start value", "Quality Code", "Persistency", "Substitute value", "Tag value [en-US]", "Update Mode", "Comment [en-US]", "Limit Upper 2 Type", "Limit Upper 2", "Limit Lower 2 Type", "Limit Lower 2", "Linear scaling", "End value PLC", "Start value PLC", "End value HMI", "Start value HMI", "Synchronization"]]
 
-    tag = interloc["Designation"]  #"020PU044U01"
-    plc = interloc["IOType_0"][:3]  #"994"
+    tag = interlocks["Designation"]  #"020PU044U01"
+    plc = interlocks["IOType_0"][:3]  #"994"
     db_num: str = str(int(motor["IOType_6"]))  #"4314"
     parent_info = get_parent_info(motor["FunctionalHierarchy"])  # "994CD100G21 SPARE MOTOR"
 
@@ -74,20 +75,39 @@ def make_motor_df(motor) -> DataFrame:
     """Создание DataFrame для тега мотора"""
     tag = motor["Designation"]  #"020PU044U01"
     plc = motor["IOType_0"][:3]  #"994"
-    db_num: str = str(int(motor["IOType_6"]))  #"4314"
+    # db_num: str = str(int(motor["IOType_6"]))  #"4314"
+    db_num = str(int(motor["IOType_6"]))  #"4314"
     parent_info = get_parent_info(motor["FunctionalHierarchy"])  # "994CD100G21 SPARE MOTOR"
+    description = motor["DefaultText"]  # "SPARE MOTOR"
 
-    motor_df = WINCC_TEMPLATE_DF.copy()
+    motor_df = WINCC_MOTOR_TEMPLATE_DF.copy()
     # replace part string value in column "Name" to variable value "tag"
-    motor_df["Name"] = motor_df["Name"].str.replace("$tag_name$", tag)
-    motor_df["Path"] = motor_df["Path"].str.replace("$tag_name$", tag)
-    motor_df["Connection"] = motor_df["Connection"].str.replace("$plc_num$", plc)
-    motor_df["Address"] = motor_df["Address"].str.replace("$dbnum$", db_num)
-    # find row with "ParentInfo" in column "Name" and insert value in "Tag value [en-US]"
-    motor_df.loc[motor_df["Name"].str.contains("ParentInfo", case=False), "Tag value [en-US]"] = parent_info
+    # motor_df["Name"] = motor_df["Name"].str.replace("$tag_name$", tag)
+    # motor_df["Path"] = motor_df["Path"].str.replace("$tag_name$", tag)
+    # motor_df["Connection"] = motor_df["Connection"].str.replace("$plc_num$", plc)
+    # motor_df["Address"] = motor_df["Address"].str.replace("$dbnum$", db_num)
+    # # find row with "ParentInfo" in column "Name" and insert value in "Tag value [en-US]"
+    # motor_df.loc[motor_df["Name"].str.contains("ParentInfo", case=False), "Tag value [en-US]"] = parent_info
+    # motor_df.loc[motor_df["Name"].str.contains("DefaultText", case=False), "Tag value [en-US]"] = description
+    motor_df = motor_df.replace([r'\$tag_name\$', r'\$plc_num\$', r'\$dbnum\$', r'\$parent_info\$', r'\$description\$'],
+                                [tag, plc, db_num, parent_info, description], regex=True)
+
     # print(motor_df)
     # get childs tags
-    childs_df = get_childs(motor["Designation"])
+    children_df = get_children_interlock(motor["Designation"])
+
+    for _, row in children_df.iterrows():
+        interlock_df = WINCC_INTERLOCK_TEMPLATE_DF.copy()
+        # extract from string "Path" part after last colon
+        interlock_name = row["Path"].split(":")[-1]
+        # interlock_df = interlock_df.replace([r'\$tag_name\$', r'\$interlock\$', r'\$plc_num\$', r'\$addr\$', r'\$description\$'],
+        #                                     [tag, interlock_name, plc, f"{int(row["IOType_3"])}", row["DefaultText"]], regex=True)
+        interlock_df = interlock_df.replace(
+            [r'\$tag_name\$', r'\$interlock\$', r'\$plc_num\$', r'\$addr\$', r'\$description\$'],
+            [tag, interlock_name, plc, f"{str(row["IOType_3"])[:-2]}", row["DefaultText"]], regex=True)
+
+        motor_df = pd.concat([motor_df, interlock_df], axis=0)
+
 
     return motor_df
 
@@ -105,11 +125,11 @@ def ecs2wincc(wincc_file: str, point_type: str, plc: str, filter: str) -> None:
                                   ECS_TAGS_DF['Designation'].str.contains(filter, case=False, na=False)]
 
     # iterating through the ecs rows in a loop
-    for index, row in ecs_tags_flt_df.iterrows():
+    for _, row in ecs_tags_flt_df.iterrows():
         # Process each row
         wincc_df = pd.concat([wincc_df, make_motor_df(row)], axis=0)
 
-    print(wincc_df)
+    # print(wincc_df)
     # wincc_df["Quality Code"] = wincc_df["Quality Code"].astype(str)
     # wincc_df["Persistency"] = wincc_df["Persistency"].astype(str)
     # wincc_df["Linear scaling"] = wincc_df["Linear scaling"].astype(str)
@@ -122,7 +142,7 @@ def ecs2wincc(wincc_file: str, point_type: str, plc: str, filter: str) -> None:
 
 
 def main():
-    global WINCC_TEMPLATE_DF, ECS_TAGS_DF
+    global WINCC_MOTOR_TEMPLATE_DF, WINCC_INTERLOCK_TEMPLATE_DF,  ECS_TAGS_DF
     parser = argparse.ArgumentParser(
         prog="ecs2wincc",
         description="Конвертация экспорта тегов  из XLSX ECS в формат импорта XLSX WinCC",
@@ -132,11 +152,11 @@ def main():
         "-v", "--version", action="version", version=f"Version {_VERSION}"
     )
     parser.add_argument(
-        "-f", "--file", type=str, default=XLS_FILE_ECS, help=f"Имя файла с тегами ECS (По умолчанию {XLS_FILE_ECS})"
+        "-f", "--file", type=str, default=XLS_ECS, help=f"Имя файла с тегами ECS (По умолчанию {XLS_ECS})"
     )
     parser.add_argument(
-        "-o", "--output", type=str, default=XLS_FILE_WINCC,
-        help=f"Имя файла для сохранения данных WinCC (По умолчанию: {XLS_FILE_WINCC})"
+        "-o", "--output", type=str, default=XLS_WINCC,
+        help=f"Имя файла для сохранения данных WinCC (По умолчанию: {XLS_WINCC})"
     )
     parser.add_argument(
         "-t", "--point_type", type=str, default=POINT_TYPE, help="Тип оборудования (по умолчанию: unimotor)"
@@ -159,11 +179,18 @@ def main():
     tag_filter = args.filter
 
     try:
-        WINCC_TEMPLATE_DF = pd.read_excel(XLS_FILE_WINCC_TEMPLATE)
+        WINCC_MOTOR_TEMPLATE_DF = pd.read_excel(XLS_MOTOR_TEMPLATE)
     except Exception as e:
-        logger.error(f"Ошибка чтения шаблона wincc: {e}")
+        logger.error(f"Ошибка чтения шаблона wincc motor: {e}")
         return
 
+    try:
+        WINCC_INTERLOCK_TEMPLATE_DF = pd.read_excel(XLS_INTERLOCK_TEMPLATE)
+        WINCC_INTERLOCK_TEMPLATE_DF = WINCC_INTERLOCK_TEMPLATE_DF.astype(str)
+
+    except Exception as e:
+        logger.error(f"Ошибка чтения шаблона wincc interlock: {e}")
+        return
     try:
         ECS_TAGS_DF = pd.read_excel(ecs_file)
     except Exception as e:
@@ -172,7 +199,7 @@ def main():
 
     if not wincc_file:
         wincc_file = ecs_file.replace(".xlsx", "_wincc.xlsx")
-    logger.info(f"Файл ECS: {ecs_file}, файл WinCC: {wincc_file}")
+        logger.info(f"Файл ECS: {ecs_file}, файл WinCC: {wincc_file}")
 
     ecs2wincc(wincc_file, point_type, plc, tag_filter)
 
