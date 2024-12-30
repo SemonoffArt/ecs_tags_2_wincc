@@ -1,4 +1,6 @@
 import logging
+from tempfile import template
+
 import pandas as pd
 import argparse
 from pathlib import Path
@@ -19,12 +21,16 @@ QTY_VALS = 0  # количество значений
 XLS_ECS = _PRG_DIR / "Points.xlsx"
 XLS_WINCC = _PRG_DIR / "tags_wincc.xlsx"
 XLS_MOTOR_TEMPLATE = _TEMPLATE_DIR / "wincc_motor_template.xlsx"
+XLS_VALVE_TEMPLATE = _TEMPLATE_DIR / "wincc_valve_template.xlsx"
 XLS_INTERLOCK_TEMPLATE = _TEMPLATE_DIR / "wincc_interlock_template.xlsx"
-POINT_TYPE = r"unimotor"
+POINT_TYPE = r"valve" # |motor"
 PLC = r"997"
 FILTER = r".*"
-WINCC_MOTOR_TEMPLATE_DF = pd.DataFrame()
-WINCC_INTERLOCK_TEMPLATE_DF = pd.DataFrame()
+TEMPLATES_DF = dict()
+# WINCC_MOTOR_TEMPLATE_DF = pd.DataFrame()
+# WINCC_VALVE_TEMPLATE_DF = pd.DataFrame()
+# WINCC_INTERLOCK_TEMPLATE_DF = pd.DataFrame()
+
 ECS_TAGS_DF = pd.DataFrame()
 
 init(autoreset=True)
@@ -55,24 +61,33 @@ def get_children_interlock(parent_tag_name: str) -> DataFrame:
     logger.info(f"Found children :  {len(ECS_TAGS_DF[mask])}")
     return ECS_TAGS_DF[mask]
 
+def extract_point_type(point_type:str) -> str:
+    """Извлечение типа оборудования из строки"""
+    if "unimotor" in point_type.lower():
+        return "motor"
+    elif "valve" in point_type.lower():
+        return "valve"
+    else:
+        return "unknown"
 
-def make_motor_df(motor) -> DataFrame:
+
+def make_unit_df(unit) -> DataFrame:
     """Создание DataFrame для тега мотора"""
-    logger.info(f"Make data frame for motor:  {motor["Designation"]}")
-    tag = motor["Designation"]  #"020PU044U01"
-    plc = motor["IOType_0"][:3]  #"994"
-    db_num = str(int(motor["IOType_6"]))  #"4314"
-    parent_info = get_parent_info(motor["FunctionalHierarchy"])  # "994CD100G21 SPARE MOTOR"
-    description = motor["DefaultText"]  # "SPARE MOTOR"
-
-    motor_df = WINCC_MOTOR_TEMPLATE_DF.copy()
+    logger.info(f"Make data frame for unit:  {unit["Designation"]}")
+    tag = unit["Designation"]  #"020PU044U01"
+    point_type = extract_point_type(unit["PointType"])  #"motor"
+    plc = unit["IOType_0"][:3]  #"994"
+    db_num = str(int(unit["IOType_6"]))  #"4314"
+    parent_info = get_parent_info(unit["FunctionalHierarchy"])  # "994CD100G21 SPARE MOTOR"
+    description = unit["DefaultText"]  # "SPARE MOTOR"
+    motor_df = TEMPLATES_DF[point_type].copy()
     motor_df = motor_df.replace([r'\$tag_name\$', r'\$plc_num\$', r'\$dbnum\$', r'\$parent_info\$', r'\$description\$'],
                                 [tag, plc, db_num, parent_info, description], regex=True)
 
-    children_df = get_children_interlock(motor["Designation"])
+    children_df = get_children_interlock(unit["Designation"])
 
     for _, row in children_df.iterrows():
-        interlock_df = WINCC_INTERLOCK_TEMPLATE_DF.copy()
+        interlock_df = TEMPLATES_DF["interlock"].copy()
         # extract from string "Path" part after last colon
         interlock_name = row["Path"].split(":")[-1]
 
@@ -101,7 +116,7 @@ def ecs2wincc(wincc_file: str, point_type: str, plc: str, filter: str) -> DataFr
     # iterating through the ecs rows in a loop
     for _, row in ecs_tags_flt_df.iterrows():
         # Process each row
-        wincc_df = pd.concat([wincc_df, make_motor_df(row)], axis=0)
+        wincc_df = pd.concat([wincc_df, make_unit_df(row)], axis=0)
 
     # print(wincc_df)
     # wincc_df["Quality Code"] = wincc_df["Quality Code"].astype(str)
@@ -116,18 +131,19 @@ def ecs2wincc(wincc_file: str, point_type: str, plc: str, filter: str) -> DataFr
     return wincc_df
 
 
-def open_templates() -> []:
+def open_templates() -> {}:
     """Open xlsx templates"""
     print(f"{Fore.YELLOW}Opening templates: {Fore.MAGENTA}{_TEMPLATE_DIR}{Style.RESET_ALL}", end="\t")
     logger.info(f"Opening templates: {_TEMPLATE_DIR}")
     try:
         wincc_motor_template_df = pd.read_excel(XLS_MOTOR_TEMPLATE)
+        wincc_valve_template_df = pd.read_excel(XLS_VALVE_TEMPLATE)
         wincc_interlock_template_df = pd.read_excel(XLS_INTERLOCK_TEMPLATE).astype(str)
     except Exception as e:
         logger.error(f"Error reading templates: {e}")
         raise
     print(f"{Fore.GREEN}OK {Style.RESET_ALL}")
-    return [wincc_motor_template_df, wincc_interlock_template_df]
+    return {"motor":wincc_motor_template_df,"valve":wincc_valve_template_df, "interlock": wincc_interlock_template_df}
 
 
 
@@ -163,7 +179,7 @@ def write_wincc_xlsx(wincc_df: DataFrame, wincc_file: str):
 
 
 def main():
-    global WINCC_MOTOR_TEMPLATE_DF, WINCC_INTERLOCK_TEMPLATE_DF, ECS_TAGS_DF
+    global TEMPLATES_DF, ECS_TAGS_DF
     print(
         f"\n{Fore.LIGHTWHITE_EX}ECS2WINCC v{_VERSION} - utility converts data from the xlsx tag export MOUSTACHE to xlsx for import into TIA WINCC Prof. {Style.RESET_ALL}")
     parser = argparse.ArgumentParser(
@@ -203,9 +219,9 @@ def main():
     logger.info(f"Run program with arg:  {parser.parse_args()}")
 
     print(f"{Fore.YELLOW}Run program with arg: {Fore.MAGENTA}{parser.parse_args()}{Style.RESET_ALL}")
-    with alive_bar(4, force_tty=True, length=12, spinner='classic') as bar:
+    with alive_bar(4, force_tty=True, length=16, bar='blocks', spinner='classic') as bar:
 
-        WINCC_MOTOR_TEMPLATE_DF, WINCC_INTERLOCK_TEMPLATE_DF = open_templates()
+        TEMPLATES_DF  = open_templates()
         bar()
         ECS_TAGS_DF = open_ecs_tags_xlsx(ecs_file)
         bar()
