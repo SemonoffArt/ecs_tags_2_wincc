@@ -8,6 +8,7 @@ from alive_progress import alive_bar, config_handler
 from colorama import init, Fore
 from colorama import Style
 from pandas.core.interchange.dataframe_protocol import DataFrame
+from unicodedata import decimal
 
 _VERSION = 0.1
 _PRG_DIR = Path("./").absolute()
@@ -22,9 +23,10 @@ XLS_ECS = _PRG_DIR / "Points.xlsx"
 XLS_WINCC = _PRG_DIR / "tags_wincc.xlsx"
 XLS_MOTOR_TEMPLATE = _TEMPLATE_DIR / "wincc_motor_template.xlsx"
 XLS_VALVE_TEMPLATE = _TEMPLATE_DIR / "wincc_valve_template.xlsx"
+XLS_ANALOG_TEMPLATE = _TEMPLATE_DIR / "wincc_analog_template.xlsx"
 XLS_INTERLOCK_TEMPLATE = _TEMPLATE_DIR / "wincc_interlock_template.xlsx"
-POINT_TYPE = r"valve" # |motor"
-PLC = r"997"
+POINT_TYPE = r"analogin" # |motor"
+PLC = r"994"
 FILTER = r".*"
 TEMPLATES_DF = dict()
 # WINCC_MOTOR_TEMPLATE_DF = pd.DataFrame()
@@ -67,12 +69,34 @@ def extract_point_type(point_type:str) -> str:
         return "motor"
     elif "valve" in point_type.lower():
         return "valve"
+    elif "analog" in point_type.lower():
+        return "analog"
     else:
         return "unknown"
 
+def get_decimal_format(decimals: int) -> str:
+    """Получение формата числа с плавающей точкой"""
+    try :
+        decimals = int(decimals)
+
+        if decimals == 0:
+            return "s999999"
+        elif decimals == 1:
+            return "s999999.9"
+        elif decimals == 2:
+            return "s999999.99"
+        elif decimals == 3:
+            return "s999999.999"
+        else:
+            return "s9999999"
+
+    except Exception as e:
+        logger.error(f"Error get decimal format: {e}")
+        return ""
+
 
 def make_unit_df(unit) -> DataFrame:
-    """Создание DataFrame для тега мотора"""
+    """Создание DataFrame для тега мотора или задвижки"""
     logger.info(f"Make data frame for unit:  {unit["Designation"]}")
     tag = unit["Designation"]  #"020PU044U01"
     point_type = extract_point_type(unit["PointType"])  #"motor"
@@ -80,9 +104,24 @@ def make_unit_df(unit) -> DataFrame:
     db_num = str(int(unit["IOType_6"]))  #"4314"
     parent_info = get_parent_info(unit["FunctionalHierarchy"])  # "994CD100G21 SPARE MOTOR"
     description = unit["DefaultText"]  # "SPARE MOTOR"
+    # analog parameters
+    if len(unit["Unit"]) > 0:
+        eu = unit["Unit"].replace("Acesys.Unit.", "")
+        eu = eu.replace("PointType.Unit.", "")
+        eu = " " + eu
+    else:
+        eu = ""
+    decimals = get_decimal_format(unit["Decimals"])
+    trend_tag_name = f"{tag}.MSW.VALUE"
+
+
     motor_df = TEMPLATES_DF[point_type].copy()
-    motor_df = motor_df.replace([r'\$tag_name\$', r'\$plc_num\$', r'\$dbnum\$', r'\$parent_info\$', r'\$description\$'],
-                                [tag, plc, db_num, parent_info, description], regex=True)
+    motor_df = motor_df.replace([r'\$tag_name\$', r'\$plc_num\$', r'\$dbnum\$', r'\$parent_info\$', r'\$description\$',
+                                 r'\$eu\$', r'\$decimals\$', r'\$trend_tag_name\$'],
+                                [tag, plc, db_num, parent_info, description, eu, decimals, trend_tag_name], regex=True)
+
+
+
 
     children_df = get_children_interlock(unit["Designation"])
 
@@ -100,6 +139,8 @@ def make_unit_df(unit) -> DataFrame:
     return motor_df
 
 
+
+
 def ecs2wincc(wincc_file: str, point_type: str, plc: str, filter: str) -> DataFrame:
     """Конвертация экспорта тегов  из XLSX ECS в формат импорта XLSX WinCC"""
     global ECS_TAGS_DF
@@ -112,11 +153,15 @@ def ecs2wincc(wincc_file: str, point_type: str, plc: str, filter: str) -> DataFr
     ecs_tags_flt_df = ECS_TAGS_DF[ECS_TAGS_DF['PointType'].str.contains(point_type, case=False) &
                                   ECS_TAGS_DF['IOType_0'].str.contains(plc, case=False, na=False) &
                                   ECS_TAGS_DF['Designation'].str.contains(filter, case=False, na=False)]
-
+    qty_rows = 0
     # iterating through the ecs rows in a loop
     for _, row in ecs_tags_flt_df.iterrows():
         # Process each row
-        wincc_df = pd.concat([wincc_df, make_unit_df(row)], axis=0)
+        # проверка, что тег ссылается на DB
+        if "SIMNONE" not in row["IOType_5"]:
+            wincc_df = pd.concat([wincc_df, make_unit_df(row)], axis=0)
+            qty_rows += 1
+
 
     # print(wincc_df)
     # wincc_df["Quality Code"] = wincc_df["Quality Code"].astype(str)
@@ -127,7 +172,7 @@ def ecs2wincc(wincc_file: str, point_type: str, plc: str, filter: str) -> DataFr
     wincc_df["Limit Upper 2 Type"] = "None"
     wincc_df["Limit Lower 2 Type"] = "None"
     print(f"{Fore.GREEN}OK {Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}Qty tags: {Fore.MAGENTA}{len(ecs_tags_flt_df)}{Style.RESET_ALL}", )
+    print(f"{Fore.YELLOW}Qty tags: {Fore.MAGENTA}{qty_rows}{Style.RESET_ALL}", )
     return wincc_df
 
 
@@ -138,12 +183,14 @@ def open_templates() -> {}:
     try:
         wincc_motor_template_df = pd.read_excel(XLS_MOTOR_TEMPLATE)
         wincc_valve_template_df = pd.read_excel(XLS_VALVE_TEMPLATE)
+        wincc_analog_template_df = pd.read_excel(XLS_ANALOG_TEMPLATE)
         wincc_interlock_template_df = pd.read_excel(XLS_INTERLOCK_TEMPLATE).astype(str)
     except Exception as e:
         logger.error(f"Error reading templates: {e}")
         raise
     print(f"{Fore.GREEN}OK {Style.RESET_ALL}")
-    return {"motor":wincc_motor_template_df,"valve":wincc_valve_template_df, "interlock": wincc_interlock_template_df}
+    return {"motor":wincc_motor_template_df,"valve":wincc_valve_template_df,  "analog":wincc_analog_template_df,
+            "interlock": wincc_interlock_template_df}
 
 
 
@@ -173,7 +220,7 @@ def write_wincc_xlsx(wincc_df: DataFrame, wincc_file: str):
 
     except Exception as e:
         print(f"{Fore.RED}FAULT{Style.RESET_ALL}")
-        err_msg = f"{Fore.RED}Error: Can't write tags to: {str(wincc_file)}"
+        err_msg = f"{Fore.RED}Error: Can't write tags to: {str(wincc_file)} \n\r {e}"
         print(err_msg)
         raise Exception(err_msg)
 
