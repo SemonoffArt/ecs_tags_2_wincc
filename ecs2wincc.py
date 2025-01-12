@@ -158,7 +158,11 @@ class ECS2WinCCConverter:
             raise Exception(err_msg)
 
     def run(self, ecs_file: str, wincc_file: str, point_type: str, plc: str, tag_filter: str):
-        with alive_bar(4, force_tty=True, length=16, bar='blocks', spinner='classic') as bar:
+        print(f"{Fore.GREEN}Converse file: {Fore.MAGENTA}{ecs_file} "
+              f"{Fore.GREEN} PLC: {Fore.MAGENTA}{plc} "
+              f"{Fore.GREEN}Point_type: {Fore.MAGENTA}{point_type} "
+              f"{Fore.GREEN}Filter: {Fore.MAGENTA}{tag_filter}{Style.RESET_ALL}")
+        with alive_bar(4, force_tty=True, length=24, bar='classic', spinner='classic') as bar:
             self.open_templates()
             bar()
             self.open_ecs_tags_xlsx(ecs_file)
