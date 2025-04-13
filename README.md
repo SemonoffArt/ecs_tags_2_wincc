@@ -1,49 +1,73 @@
-# **ecs2wincc** - Point Converter from FLS ECS to SIEMENS WINCC
+# ECS2WinCC - Point Converter from FLS ECS SCADA to SIEMENS WinCC
 
-Console utility **ecs2wincc** creates an Excel file for importing points of Acesys objects to TIA WinCC based on the Excel file for exporting ECS points.
+A powerful console utility that converts FLS ECS points to SIEMENS WinCC format, making it easy to migrate your automation system data.
 
-## Features
+## 🚀 Features
 
-- Converts FLS ECS Points (export to excel ) to WinCC format.
-- Supports different equipment types: motor, valve, and analog.
-- Filters tags based on user-defined criteria.
-- Logs the conversion process.
-- Provides progress updates using `alive_progress`.
+- 🔄 Convert FLS ECS Points (Excel export) to WinCC format
+- 🏭 Support for multiple equipment types:
+  - Motors
+  - Valves
+  - Analog
+- 🔍 Advanced tag filtering capabilities
+- 📝 Detailed conversion logging
+- 📊 Real-time progress tracking with `alive_progress`
 
-## Installation
+## 📋 Prerequisites
+
+- Python 3.x
+- Required Python packages (see requirements.txt)
+
+## 💻 Installation
 
 1. Clone the repository:
-    ```sh
-    git clone https://github.com/yourusername/ecs2wincc.git
-    ```
-2. Navigate to the project directory:
-    ```sh
-    cd ecs2wincc
-    ```
-3. Install the required dependencies:
-    ```sh
-    pip install -r requirements.txt
-    ```
+   ```bash
+   git clone https://github.com/yourusername/ecs2wincc.git
+   cd ecs2wincc
+   ```
 
-## Usage
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Run the converter with the following command:
-```sh
+## 🛠 Usage
+
+Basic command:
+```bash
 python ecs2wincc.py [options]
 ```
 
-## Options
-file: Name of the file with ECS tags (Default: Points.xlsx)
--o, --output: Name of the file to save WinCC data (Default: tags_wincc.xlsx)
--t, --point_type: Equipment type (motor|valve|analog) (Default: motor)
--p, --plc: PLC (Default: 994)
--ftr, --filter: Tag filter (Default: .*)
+### Command Line Options
 
+| Option | Description | Default |
+|--------|-------------|---------|
+| `file` | Input file with ECS tags | Points.xlsx |
+| `-o, --output` | Output file for WinCC data | tags_wincc.xlsx |
+| `-t, --point_type` | Equipment type (motor\|valve\|analog) | motor |
+| `-p, --plc` | PLC number | 994 |
+| `-ftr, --filter` | Tag filter pattern | .* |
 
-## Example
-```sh
+### Examples
+
+Convert motor points:
+```bash
 python ecs2wincc.py Points.xlsx -o tags_wincc.xlsx -t motor -p 994 -ftr .*
 ```
 
-## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+Convert valve points:
+```bash
+python ecs2wincc.py Points.xlsx -o tags_wincc.xlsx -t valve -p 994 -ftr .*
+```
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📫 Support
+
+For support, please open an issue in the GitHub repository.
